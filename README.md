@@ -28,7 +28,7 @@ git clone https://github.com/kazmight/Helios-Auto-TX.git
 cd Helios-Auto-TX
 ```
 
-## 2. Install Dependencies: Run the following command to install all required Node.js packages:
+## 2. Install Dependencies:
 ```Bash
 npm install chalk ethers dotenv axios uuidv4 readline
 ```
