@@ -1,4 +1,4 @@
-# Helios Testnet Auto Bot
+# Helios Testnet Auto Transaction
 
 This Node.js bot automates bridging and staking activities on the Helios Testnet using multiple private keys. It's designed to help interact with the network by performing repetitive tasks with configurable delays.
 
