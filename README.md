@@ -24,8 +24,8 @@ Node.js: Make sure you have Node.js (v14 or higher recommended) installed. You c
 ## 1. Installation
 Clone:
 ```Bash
-git clone https://github.com/kazmight/Hellios-Auto-TX.git
-cd Hellios-Auto-TX
+git clone https://github.com/kazmight/Helios-Auto-TX.git
+cd Helios-Auto-TX
 ```
 
 ## 2. Install Dependencies: Run the following command to install all required Node.js packages:
