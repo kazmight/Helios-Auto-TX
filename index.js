@@ -1,24 +1,40 @@
 import chalk from "chalk";
 import { ethers } from "ethers";
-import dotenv from "dotenv";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
-import readline from "readline"; // Import readline for console input
+import readline from "readline";
 
-// Load environment variables from .env file
-dotenv.config();
-
+// --- Configuration ---
 const RPC_URL = "https://testnet1.helioschainlabs.org/";
 const TOKEN_ADDRESS = "0xD4949664cD82660AaE99bEdc034a0deA8A0bd517";
 const BRIDGE_ROUTER_ADDRESS = "0x0000000000000000000000000000000000000900";
 const STAKE_ROUTER_ADDRESS = "0x0000000000000000000000000000000000000800";
 const CHAIN_ID = 42000;
+
+// IMPORTANT: Replace with your actual private keys.
+// Example: ["0x123...", "0x456..."]
+const INITIAL_PRIVATE_KEYS = [
+  // Masukkan kunci privat Anda di sini, dipisahkan koma
+  // Contoh: "0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+  //        "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+];
+
+let dailyActivityConfig = {
+  bridgeRepetitions: 1,
+  minHlsBridge: 0.001,
+  maxHlsBridge: 0.004,
+  stakeRepetitions: 1,
+  minHlsStake: 0.01,
+  maxHlsStake: 0.03,
+};
+// --- End Configuration ---
+
 const availableChains = [11155111, 43113, 97, 80002];
 const chainNames = {
-  11155111: "Sepolia",
-  43113: "Fuji",
-  97: "BSC Testnet",
-  80002: "Amoy",
+  11155111: " Ethereum Sepolia",
+  43113: "Avalanche Fuji",
+  97: "Binance Smart Chain Testnet",
+  80002: "Polygon Amoy",
 };
 
 const availableValidators = [
@@ -42,15 +58,6 @@ let selectedWalletIndex = 0;
 let nonceTracker = {};
 let hasLoggedSleepInterrupt = false;
 let activeProcesses = 0;
-
-let dailyActivityConfig = {
-  bridgeRepetitions: Number(process.env.BRIDGE_REPETITIONS) || 1,
-  minHlsBridge: Number(process.env.MIN_HLS_BRIDGE) || 0.001,
-  maxHlsBridge: Number(process.env.MAX_HLS_BRIDGE) || 0.004,
-  stakeRepetitions: Number(process.env.STAKE_REPETITIONS) || 1,
-  minHlsStake: Number(process.env.MIN_HLS_STAKE) || 0.01,
-  maxHlsStake: Number(process.env.MAX_HLS_STAKE) || 0.03,
-};
 
 // Interface for reading user input
 const rl = readline.createInterface({
@@ -137,20 +144,13 @@ function getShortHash(hash) {
 }
 
 function loadPrivateKeys() {
-  try {
-    const keys = process.env.PRIVATE_KEYS;
-    if (!keys) {
-      throw new Error("PRIVATE_KEYS not found in .env file.");
-    }
-    privateKeys = keys
-      .split(",")
-      .map((key) => key.trim())
-      .filter((key) => key.match(/^(0x)?[0-9a-fA-F]{64}$/));
-    if (privateKeys.length === 0) throw new Error("No valid private keys in .env PRIVATE_KEYS");
-    addLog(`Loaded ${privateKeys.length} private keys from .env`, "success");
-  } catch (error) {
-    addLog(`Failed to load private keys: ${error.message}`, "error");
-    privateKeys = [];
+  // Use INITIAL_PRIVATE_KEYS directly
+  privateKeys = INITIAL_PRIVATE_KEYS.filter(key => key.match(/^(0x)?[0-9a-fA-F]{64}$/));
+
+  if (privateKeys.length === 0) {
+    addLog("No valid private keys found in INITIAL_PRIVATE_KEYS. Please set them in index.js.", "error");
+  } else {
+    addLog(`Loaded ${privateKeys.length} private keys from script configuration.`, "success");
   }
 }
 
@@ -399,7 +399,7 @@ async function stake(wallet, amount, validatorAddress, validatorName) {
 
 async function runDailyActivity() {
   if (privateKeys.length === 0) {
-    addLog("No valid private keys found.", "error");
+    addLog("No valid private keys found. Please add them to INITIAL_PRIVATE_KEYS in index.js.", "error");
     return;
   }
   addLog(
@@ -411,12 +411,11 @@ async function runDailyActivity() {
   shouldStop = false;
   hasLoggedSleepInterrupt = false;
   activeProcesses = Math.max(0, activeProcesses);
-  // No updateMenu() call here as there's no TUI menu
 
   try {
     for (let accountIndex = 0; accountIndex < privateKeys.length && !shouldStop; accountIndex++) {
       addLog(`Starting processing for account ${accountIndex + 1}`, "info");
-      selectedWalletIndex = accountIndex; // Keep track for wallet info
+      selectedWalletIndex = accountIndex;
       let provider;
       addLog(`Account ${accountIndex + 1}: Connecting without proxy`, "info");
       try {
@@ -493,7 +492,6 @@ async function runDailyActivity() {
           }
 
           await bridge(wallet, amountHLS, wallet.address, destChainId);
-          // No updateWallets() call here as there's no live TUI display
         } catch (error) {
           addLog(`Account ${accountIndex + 1} - Bridge ${bridgeCount + 1}: Failed: ${error.message}`, "error");
         }
@@ -534,7 +532,6 @@ async function runDailyActivity() {
             "info"
           );
           await stake(wallet, amountHLS, validator.address, validator.name);
-          // No updateWallets() call here
         } catch (error) {
           addLog(`Account ${accountIndex + 1} - Stake ${stakeCount + 1}: Failed: ${error.message}`, "error");
         }
@@ -579,8 +576,7 @@ async function runDailyActivity() {
             hasLoggedSleepInterrupt = false;
             activeProcesses = 0;
             addLog("Daily activity stopped successfully.", "success");
-            // No updateMenu() or updateStatus() or safeRender() here
-            displayMainMenu(); // Redisplay menu after stop
+            displayMainMenu();
           } else {
             addLog(`Waiting for ${activeProcesses} process to complete...`, "info");
           }
@@ -588,10 +584,9 @@ async function runDailyActivity() {
       } else {
         activityRunning = false;
         isCycleRunning = activeProcesses > 0 || dailyActivityInterval !== null;
-        // No updateMenu() or updateStatus() or safeRender() here
-        displayMainMenu(); // Redisplay menu after cycle completion
+        displayMainMenu();
       }
-      nonceTracker = {}; // Reset nonce tracker after a full cycle or stop
+      nonceTracker = {};
     } catch (finalError) {
       addLog(`Error in runDailyActivity cleanup: ${finalError.message}`, "error");
     }
@@ -817,7 +812,7 @@ function promptConfigAction() {
 async function initialize() {
   console.clear();
   displayHeader();
-  loadPrivateKeys(); // Load keys from .env
+  loadPrivateKeys(); // Load keys directly from the script
   await displayWalletInfo(); // Display wallet info on startup
   displayMainMenu(); // Show the main menu
 }
