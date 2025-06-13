@@ -550,9 +550,9 @@ async function runDailyActivity() {
     log.error("No valid private keys found. Please add them to PRIVATE_KEYS in your .env file.");
     return;
   }
-  log.info(`Starting daily activity for all accounts`);
+  log.info(`Starting activity for all accounts`);
   log.info(`Bridge: ${dailyActivityConfig.bridgeRepetitions}`);
-  log.info(`Stake Reps: ${dailyActivityConfig.stakeRepetitions}`);
+  log.info(`Stake: ${dailyActivityConfig.stakeRepetitions}`);
   log.info(
     `Delay between transactions: ${dailyActivityConfig.minDelayBetweenTx / 1000}s - ${
       dailyActivityConfig.maxDelayBetweenTx / 1000
