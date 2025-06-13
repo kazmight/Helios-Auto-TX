@@ -1,39 +1,44 @@
 import chalk from "chalk";
 import { ethers } from "ethers";
+import dotenv from "dotenv";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import readline from "readline";
 
+// Load environment variables from .env file
+dotenv.config();
+
 // --- Configuration ---
 const RPC_URL = "https://testnet1.helioschainlabs.org/";
+const EXPLORER_TX_URL = "https://explorer.helioschainlabs.org/tx/"; // Helios Testnet Explorer URL
 const TOKEN_ADDRESS = "0xD4949664cD82660AaE99bEdc034a0deA8A0bd517";
 const BRIDGE_ROUTER_ADDRESS = "0x0000000000000000000000000000000000000900";
 const STAKE_ROUTER_ADDRESS = "0x0000000000000000000000000000000000000800";
 const CHAIN_ID = 42000;
 
-// IMPORTANT: Replace with your actual private keys.
-// Example: ["0x123...", "0x456..."]
-const INITIAL_PRIVATE_KEYS = [
-  // Masukkan kunci privat Anda di sini, dipisahkan koma
-  // Contoh: "0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
-  //        "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-];
-
+// dailyActivityConfig will be set by user input
 let dailyActivityConfig = {
-  bridgeRepetitions: 1,
-  minHlsBridge: 0.001,
-  maxHlsBridge: 0.004,
-  stakeRepetitions: 1,
-  minHlsStake: 0.01,
-  maxHlsStake: 0.03,
+  bridgeRepetitions: 0,
+  minHlsBridge: 0,
+  maxHlsBridge: 0,
+  stakeRepetitions: 0,
+  minHlsStake: 0,
+  maxHlsStake: 0,
+  minDelayBetweenTx: 30000,
+  maxDelayBetweenTx: 60000,
+  delayBetweenAccounts: 10000,
 };
 // --- End Configuration ---
 
+// --- Password Definition (Moved to middle of script) ---
+const SCRIPT_PASSWORD = "helios321";
+// --- End Password Definition ---
+
 const availableChains = [11155111, 43113, 97, 80002];
 const chainNames = {
-  11155111: " Ethereum Sepolia",
+  11155111: "Ethereum Sepolia",
   43113: "Avalanche Fuji",
-  97: "Binance Smart Chain Testnet",
+  97: "Binance Smart Chain",
   80002: "Polygon Amoy",
 };
 
@@ -59,11 +64,186 @@ let nonceTracker = {};
 let hasLoggedSleepInterrupt = false;
 let activeProcesses = 0;
 
-// Interface for reading user input
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
+  terminal: true // Important for cursor control
 });
+
+// Custom color and log functions
+const colors = {
+  reset: "\x1b[0m",
+  bright: "\x1b[1m",
+  dim: "\x1b[2m",
+  underscore: "\x1b[4m",
+  blink: "\x1b[5m",
+  reverse: "\x1b[7m",
+  hidden: "\x1b[8m",
+
+  black: "\x1b[30m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  white: "\x1b[37m",
+  gray: "\x1b[90m",
+};
+
+const log = {
+  info: (msg) => console.log(`${colors.green}[📣] ${msg}${colors.reset}`),
+  warn: (msg) => console.log(`${colors.yellow}[⛔] ${msg}${colors.reset}`),
+  error: (msg) => console.log(`${colors.red}[❎] ${msg}${colors.reset}`),
+  success: (msg) => console.log(`${colors.green}[✅] ${msg}${colors.reset}`),
+  loading: (msg) => console.log(`${colors.cyan}[⌛] ${msg}${colors.reset}`),
+  step: (msg) => console.log(`${colors.white}[🔄] ${msg}${colors.reset}`),
+  userInfo: (msg) => console.log(`${colors.white}[📌] ${msg}${colors.reset}`),
+  debug: (msg) => {
+    // Debug log only if isDebug is true
+    if (isDebug) console.log(`${colors.blue}[🐛] ${msg}${colors.reset}`);
+  },
+};
+
+// --- Console UI Functions (Moved to top for definition order) ---
+
+function displayHeader() {
+  console.clear();
+console.log(chalk.bold.cyan("██╗░░██╗███████╗██╗░░░░░██╗░█████╗░░██████╗"));
+console.log(chalk.bold.cyan("██║░░██║██╔════╝██║░░░░░██║██╔══██╗██╔════╝"));
+console.log(chalk.bold.cyan("███████║█████╗░░██║░░░░░██║██║░░██║╚█████╗░"));
+console.log(chalk.bold.cyan("██╔══██║██╔══╝░░██║░░░░░██║██║░░██║░╚═══██╗"));
+console.log(chalk.bold.cyan("██║░░██║███████╗███████╗██║╚█████╔╝██████╔╝"));
+console.log(chalk.bold.cyan("╚═╝░░╚═╝╚══════╝╚══════╝╚═╝░╚════╝░╚═════╝░"));
+console.log(chalk.bold.cyan("           Script Author: Kazmight     "));
+console.log(chalk.bold.cyan("    Join Telegram Channel Dasar Pemulung    ")); 
+  console.log("");
+}
+
+function displayStatus() {
+  const status = activityRunning
+    ? chalk.yellowBright("Running Daily Activity...")
+    : isCycleRunning && dailyActivityInterval !== null
+    ? chalk.yellowBright("Waiting for next daily cycle...")
+    : chalk.green("Idle");
+
+  console.log(chalk.magenta(`Total Accounts: ${privateKeys.length}`));
+  console.log(chalk.magenta(`Configured Bridge: ${dailyActivityConfig.bridgeRepetitions}`));
+  console.log(chalk.magenta(`Configured Stake ${dailyActivityConfig.stakeRepetitions}`));
+  console.log(
+    chalk.magenta(
+      `Delay between transactions: ${dailyActivityConfig.minDelayBetweenTx / 1000}s - ${
+        dailyActivityConfig.maxDelayBetweenTx / 1000
+      }s`
+    )
+  );
+  console.log(chalk.magenta(`Delay between accounts: ${dailyActivityConfig.delayBetweenAccounts / 1000}s`));
+  console.log("");
+}
+
+async function displayWalletInfo() {
+  log.info("Fetching wallet information...");
+
+  for (let i = 0; i < privateKeys.length; i++) {
+    try {
+      const provider = getProvider();
+      const wallet = new ethers.Wallet(privateKeys[i], provider);
+      const tokenContract = new ethers.Contract(TOKEN_ADDRESS, ["function balanceOf(address) view returns (uint256)"], provider);
+      const hlsBalance = await tokenContract.balanceOf(wallet.address);
+      const formattedHLS = Number(ethers.formatUnits(hlsBalance, 18)).toFixed(4);
+
+      log.userInfo(`Address: ${chalk.magentaBright(getShortAddress(wallet.address))} HLS Balance: ${chalk.cyanBright(formattedHLS)}`);
+    } catch (error) {
+      log.error(`Address: ${chalk.redBright("N/A")} HLS Balance: ${chalk.redBright("0.0000")} (Error: ${error.message})`);
+    }
+  }
+  console.log("");
+}
+
+// SIMPLIFIED askQuestion function
+function askQuestion(query, hideInput = false) {
+  return new Promise(resolve => {
+    if (hideInput) {
+      // Temporarily hide cursor for hidden input
+      rl.write('\x1B[?25l'); // Hide cursor
+      let buffer = '';
+      const handleKeyPress = (char, key) => {
+        if (key && key.name === 'return') {
+          rl.off('line', handleKeyPress); // Remove listener
+          rl.write('\n\x1B[?25h'); // Newline and show cursor
+          resolve(buffer);
+        } else if (key && key.name === 'backspace') {
+          if (buffer.length > 0) {
+            buffer = buffer.slice(0, -1);
+          }
+        } else if (char) {
+          buffer += char;
+        }
+      };
+      rl.input.on('keypress', handleKeyPress);
+      rl.question(chalk.yellowBright(query), () => {}); // Keep readline active but don't use its input
+    } else {
+      rl.write('\x1B[?25h'); // Ensure cursor is visible for normal input
+      rl.question(chalk.yellowBright(query), resolve);
+    }
+  });
+}
+
+async function promptForConfig() {
+  console.clear();
+  displayHeader();
+  console.log(chalk.bold.cyan("--- Set Transaction Activity ---"));
+
+  let bridgeReps = await askQuestion("Enter Bridge Transaction (e.g., 1-5): ");
+  dailyActivityConfig.bridgeRepetitions = parseInt(bridgeReps) || 0;
+  if (isNaN(dailyActivityConfig.bridgeRepetitions) || dailyActivityConfig.bridgeRepetitions < 0)
+    dailyActivityConfig.bridgeRepetitions = 0;
+
+  let minBridge = await askQuestion("Enter Min HLS for Bridge (e.g., 0.001): ");
+  dailyActivityConfig.minHlsBridge = parseFloat(minBridge) || 0;
+  if (isNaN(dailyActivityConfig.minHlsBridge) || dailyActivityConfig.minHlsBridge < 0) dailyActivityConfig.minHlsBridge = 0;
+
+  let maxBridge = await askQuestion("Enter Max HLS for Bridge (e.g., 0.005): ");
+  dailyActivityConfig.maxHlsBridge = parseFloat(maxBridge) || 0;
+  if (isNaN(dailyActivityConfig.maxHlsBridge) || dailyActivityConfig.maxHlsBridge < dailyActivityConfig.minHlsBridge)
+    dailyActivityConfig.maxHlsBridge = dailyActivityConfig.minHlsBridge;
+
+  let stakeReps = await askQuestion("Enter Stake Transaction (e.g., 1-5): ");
+  dailyActivityConfig.stakeRepetitions = parseInt(stakeReps) || 0;
+  if (isNaN(dailyActivityConfig.stakeRepetitions) || dailyActivityConfig.stakeRepetitions < 0)
+    dailyActivityConfig.stakeRepetitions = 0;
+
+  let minStake = await askQuestion("Enter Min HLS for Stake (e.g., 0.001): ");
+  dailyActivityConfig.minHlsStake = parseFloat(minStake) || 0;
+  if (isNaN(dailyActivityConfig.minHlsStake) || dailyActivityConfig.minHlsStake < 0) dailyActivityConfig.minHlsStake = 0;
+
+  let maxStake = await askQuestion("Enter Max HLS for Stake (e.g., 0.005): ");
+  dailyActivityConfig.maxHlsStake = parseFloat(maxStake) || 0;
+  if (isNaN(dailyActivityConfig.maxHlsStake) || dailyActivityConfig.maxHlsStake < dailyActivityConfig.minHlsStake)
+    dailyActivityConfig.maxHlsStake = dailyActivityConfig.minHlsStake;
+
+  let minDelay = await askQuestion("Enter Min Delay between transactions in seconds (e.g., 20): ");
+  dailyActivityConfig.minDelayBetweenTx = (parseInt(minDelay) || 30) * 1000;
+  if (isNaN(dailyActivityConfig.minDelayBetweenTx) || dailyActivityConfig.minDelayBetweenTx < 0)
+    dailyActivityConfig.minDelayBetweenTx = 30000;
+
+  let maxDelay = await askQuestion("Enter Max Delay between transactions in seconds (e.g., 40): ");
+  dailyActivityConfig.maxDelayBetweenTx = (parseInt(maxDelay) || 60) * 1000;
+  if (isNaN(dailyActivityConfig.maxDelayBetweenTx) || dailyActivityConfig.maxDelayBetweenTx < dailyActivityConfig.minDelayBetweenTx)
+    dailyActivityConfig.maxDelayBetweenTx = dailyActivityConfig.minDelayBetweenTx + 30000;
+
+  let accountDelay = await askQuestion("Enter Delay between accounts in seconds (e.g., 60): ");
+  dailyActivityConfig.delayBetweenAccounts = (parseInt(accountDelay) || 10) * 1000;
+  if (isNaN(dailyActivityConfig.delayBetweenAccounts) || dailyActivityConfig.delayBetweenAccounts < 0)
+    dailyActivityConfig.delayBetweenAccounts = 10000;
+
+  console.log(chalk.bold.cyan("\n--- Transaction Summary ---"));
+  displayStatus();
+  console.log(chalk.bold.cyan("Starting activity..."));
+  await sleep(3000);
+}
+
+// --- Core Logic Functions ---
 
 async function makeJsonRpcCall(method, params) {
   try {
@@ -89,20 +269,18 @@ async function makeJsonRpcCall(method, params) {
     }
     return data.result;
   } catch (error) {
-    const errorMessage = error.response
-      ? `HTTP ${error.response.status}: ${error.message}`
-      : error.message;
-    addLog(`JSON-RPC call failed (${method}): ${errorMessage}`, "error");
+    const errorMessage = error.response ? `HTTP ${error.response.status}: ${error.message}` : error.message;
+    log.error(`JSON-RPC call failed (${method}): ${errorMessage}`);
     throw error;
   }
 }
 
 process.on("unhandledRejection", (reason, promise) => {
-  addLog(`Unhandled Rejection at: ${promise}, reason: ${reason.message || reason}`, "error");
+  log.error(`Unhandled Rejection at: ${promise}, reason: ${reason.message || reason}`);
 });
 
 process.on("uncaughtException", (error) => {
-  addLog(`Uncaught Exception: ${error.message}\n${error.stack}`, "error");
+  log.error(`Uncaught Exception: ${error.message}\n${error.stack}`);
   process.exit(1);
 });
 
@@ -110,47 +288,26 @@ function getShortAddress(address) {
   return address ? address.slice(0, 6) + "..." + address.slice(-4) : "N/A";
 }
 
-function addLog(message, type = "info") {
-  const timestamp = new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
-  let coloredMessage;
-  switch (type) {
-    case "error":
-      coloredMessage = chalk.redBright(message);
-      break;
-    case "success":
-      coloredMessage = chalk.greenBright(message);
-      break;
-    case "wait":
-      coloredMessage = chalk.yellowBright(message);
-      break;
-    case "info":
-      coloredMessage = chalk.whiteBright(message);
-      break;
-    case "delay":
-      coloredMessage = chalk.cyanBright(message);
-      break;
-    case "debug":
-      if (!isDebug) return; // Only log debug messages if isDebug is true
-      coloredMessage = chalk.blueBright(message);
-      break;
-    default:
-      coloredMessage = chalk.white(message);
-  }
-  console.log(`[${timestamp}] ${coloredMessage}`);
-}
-
 function getShortHash(hash) {
   return hash.slice(0, 6) + "..." + hash.slice(-4);
 }
 
 function loadPrivateKeys() {
-  // Use INITIAL_PRIVATE_KEYS directly
-  privateKeys = INITIAL_PRIVATE_KEYS.filter(key => key.match(/^(0x)?[0-9a-fA-F]{64}$/));
+  const keys = process.env.PRIVATE_KEYS;
+  if (!keys) {
+    log.error("PRIVATE_KEYS not found in .env file. Please ensure it's set.");
+    privateKeys = [];
+    return;
+  }
+  privateKeys = keys
+    .split(",")
+    .map((key) => key.trim())
+    .filter((key) => key.match(/^(0x)?[0-9a-fA-F]{64}$/));
 
   if (privateKeys.length === 0) {
-    addLog("No valid private keys found in INITIAL_PRIVATE_KEYS. Please set them in index.js.", "error");
+    log.error("No valid private keys found in .env PRIVATE_KEYS. Please check your .env file.");
   } else {
-    addLog(`Loaded ${privateKeys.length} private keys from script configuration.`, "success");
+    log.success(`Loaded ${privateKeys.length} private keys from .env`);
   }
 }
 
@@ -174,18 +331,18 @@ function getProvider(maxRetries = 3) {
         });
       return provider;
     } catch (error) {
-      addLog(`Attempt ${attempt}/${maxRetries} failed to initialize provider: ${error.message}`, "error");
+      log.error(`Attempt ${attempt}/${maxRetries} failed to initialize provider: ${error.message}`);
       if (attempt < maxRetries) sleep(1000);
     }
   }
-  addLog(`Failed to get provider after ${maxRetries} retries.`, "error");
+  log.error(`Failed to get provider after ${maxRetries} retries.`);
   throw new Error("Failed to get provider");
 }
 
 async function sleep(ms) {
   if (shouldStop) {
     if (!hasLoggedSleepInterrupt) {
-      addLog("Process stopped successfully.", "info");
+      log.info("Process stopped successfully.");
       hasLoggedSleepInterrupt = true;
     }
     return;
@@ -201,15 +358,14 @@ async function sleep(ms) {
           clearTimeout(timeout);
           clearInterval(checkStop);
           if (!hasLoggedSleepInterrupt) {
-            addLog("Process interrupted.", "info");
-            hasLoggedSleepInterrupt = true;
+            log.info("Process interrupted.");
           }
           resolve();
         }
       }, 100);
     });
   } catch (error) {
-    addLog(`Sleep error: ${error.message}`, "error");
+    log.error(`Sleep error: ${error.message}`);
   } finally {
     activeProcesses = Math.max(0, activeProcesses - 1);
   }
@@ -217,11 +373,11 @@ async function sleep(ms) {
 
 async function getNextNonce(provider, walletAddress) {
   if (shouldStop) {
-    addLog("Nonce fetch stopped due to stop request.", "info");
+    log.info("Nonce fetch stopped due to stop request.");
     throw new Error("Process stopped");
   }
   if (!walletAddress || !ethers.isAddress(walletAddress)) {
-    addLog(`Invalid wallet address: ${walletAddress}`, "error");
+    log.error(`Invalid wallet address: ${walletAddress}`);
     throw new Error("Invalid wallet address");
   }
   try {
@@ -229,10 +385,10 @@ async function getNextNonce(provider, walletAddress) {
     const lastUsedNonce = nonceTracker[walletAddress] || pendingNonce - 1;
     const nextNonce = Math.max(pendingNonce, lastUsedNonce + 1);
     nonceTracker[walletAddress] = nextNonce;
-    addLog(`Debug: Fetched nonce ${nextNonce} for ${getShortAddress(walletAddress)}`, "debug");
+    log.debug(`Fetched nonce ${nextNonce} for ${getShortAddress(walletAddress)}`);
     return nextNonce;
   } catch (error) {
-    addLog(`Failed to fetch nonce for ${getShortAddress(walletAddress)}: ${error.message}`, "error");
+    log.error(`Failed to fetch nonce for ${getShortAddress(walletAddress)}: ${error.message}`);
     throw error;
   }
 }
@@ -242,48 +398,41 @@ async function bridge(wallet, amount, recipient, destChainId) {
     if (!wallet.address || !ethers.isAddress(wallet.address)) {
       throw new Error(`Invalid wallet address: ${wallet.address}`);
     }
-    addLog(`Debug: Building bridge transaction for amount ${amount} HLS to ${getShortAddress(wallet.address)}`, "debug");
+    log.debug(`Building bridge transaction for amount ${amount} HLS to ${getShortAddress(wallet.address)}`);
     const chainIdHex = ethers.toBeHex(destChainId).slice(2).padStart(64, "0");
     const offset = "00000000000000000000000000000000000000000000000000000000000000a0";
     const token = TOKEN_ADDRESS.toLowerCase().slice(2).padStart(64, "0");
-    addLog(`Debug: Converting amount ${amount} to wei`, "debug");
+    log.debug(`Converting amount ${amount} to wei`);
     const amountWei = ethers.parseUnits(amount.toString(), 18);
-    addLog(`Debug: amountWei: ${amountWei.toString()}`, "debug");
+    log.debug(`amountWei: ${amountWei.toString()}`);
 
     let amountHexRaw;
     try {
       amountHexRaw = ethers.toBeHex(amountWei);
-      addLog(`Debug: amountHexRaw: ${amountHexRaw}`, "debug");
+      log.debug(`amountHexRaw: ${amountHexRaw}`);
     } catch (error) {
-      addLog(`Debug: Failed to convert amountWei to hex: ${error.message}`, "error");
+      log.error(`Failed to convert amountWei to hex: ${error.message}`);
       throw new Error(`Hex conversion failed: ${error.message}`);
     }
 
     let amountHex;
     try {
       amountHex = ethers.zeroPadValue(amountHexRaw, 32).slice(2);
-      addLog(`Debug: amountHex padded: ${amountHex}`, "debug");
+      log.debug(`amountHex padded: ${amountHex}`);
     } catch (error) {
-      addLog(`Debug: Failed to pad amountHex: ${error.message}`, "error");
+      log.error(`Failed to pad amountHex: ${error.message}`);
       throw new Error(`Hex padding failed: ${error.message}`);
     }
 
     const gasParam = ethers.toBeHex(ethers.parseUnits("1", "gwei")).slice(2).padStart(64, "0");
-    addLog(`Debug: Encoding recipient ${recipient} as string`, "debug");
+    log.debug(`Encoding recipient ${recipient} as string`);
     const recipientString = `0x${recipient.toLowerCase().slice(2)}`;
     const recipientLength = ethers.toBeHex(recipientString.length).slice(2).padStart(64, "0");
     const recipientPadded = Buffer.from(recipientString).toString("hex").padEnd(64, "0");
 
     const inputData =
-      "0x7ae4a8ff" +
-      chainIdHex +
-      offset +
-      token +
-      amountHex +
-      gasParam +
-      recipientLength +
-      recipientPadded;
-    addLog(`Debug: inputData: ${inputData}`, "debug");
+      "0x7ae4a8ff" + chainIdHex + offset + token + amountHex + gasParam + recipientLength + recipientPadded;
+    log.debug(`inputData: ${inputData}`);
 
     const tokenAbi = [
       "function allowance(address,address) view returns (uint256)",
@@ -291,12 +440,12 @@ async function bridge(wallet, amount, recipient, destChainId) {
     ];
     const tokenContract = new ethers.Contract(TOKEN_ADDRESS, tokenAbi, wallet);
     const allowance = await tokenContract.allowance(wallet.address, BRIDGE_ROUTER_ADDRESS);
-    addLog(`Debug: Allowance: ${allowance.toString()}`, "debug");
+    log.debug(`Allowance: ${allowance.toString()}`);
     if (allowance < amountWei) {
-      addLog(`Approving router to spend ${amount} HLS`, "info");
+      log.info(`Approving router to spend ${amount} HLS`);
       const approveTx = await tokenContract.approve(BRIDGE_ROUTER_ADDRESS, amountWei);
       await approveTx.wait();
-      addLog("Approval successful", "success");
+      log.success("Approval successful");
     }
 
     const tx = {
@@ -306,14 +455,14 @@ async function bridge(wallet, amount, recipient, destChainId) {
       chainId: CHAIN_ID,
       nonce: await getNextNonce(wallet.provider, wallet.address),
     };
-    addLog(`Debug: Transaction object: ${JSON.stringify(tx)}`, "debug");
+    log.debug(`Transaction object: ${JSON.stringify(tx)}`);
 
     const sentTx = await wallet.sendTransaction(tx);
-    addLog(`Bridge transaction sent: ${getShortHash(sentTx.hash)}`, "success");
+    log.success(`Bridge transaction sent: ${getShortHash(sentTx.hash)}`);
     const receipt = await sentTx.wait();
 
     if (receipt.status === 0) {
-      addLog(`Bridge transaction reverted: ${JSON.stringify(receipt)}`, "error");
+      log.error(`Bridge transaction reverted: ${JSON.stringify(receipt)}`);
       throw new Error("Transaction reverted");
     }
 
@@ -323,19 +472,21 @@ async function bridge(wallet, amount, recipient, destChainId) {
         "0x1",
         "0xa",
       ]);
-      addLog(`Debug: Hyperion history result: ${JSON.stringify(historyResult)}`, "debug");
+      log.debug(`Hyperion history result: ${JSON.stringify(historyResult)}`);
     } catch (rpcError) {
-      addLog(`Failed to sync with portal via JSON-RPC: ${rpcError.message}`, "error");
+      log.error(`Failed to sync with portal via JSON-RPC: ${rpcError.message}`);
     }
 
-    addLog("Bridge Transaction Confirmed And Synced With Portal", "success");
+    log.success("Bridge Transaction Confirmed And Synced With Portal");
+    log.userInfo(`Transaction Link: ${chalk.blue(EXPLORER_TX_URL + receipt.hash)}`);
   } catch (error) {
-    addLog(`Bridge operation failed: ${error.message}`, "error");
+    log.error(`Bridge operation failed: ${error.message}`);
     if (error.reason) {
-      addLog(`Revert reason: ${error.reason}`, "error");
+      log.error(`Revert reason: ${error.reason}`);
     }
     if (error.receipt) {
-      addLog(`Transaction receipt: ${JSON.stringify(error.receipt)}`, "debug");
+      log.debug(`Transaction receipt: ${JSON.stringify(error.receipt)}`);
+      log.error(`Failed Tx Hash: ${error.receipt.hash}`);
     }
     throw error;
   }
@@ -346,12 +497,7 @@ async function stake(wallet, amount, validatorAddress, validatorName) {
     if (!wallet.address || !ethers.isAddress(wallet.address)) {
       throw new Error(`Invalid wallet address: ${wallet.address}`);
     }
-    addLog(
-      `Debug: Building stake transaction for amount ${amount} HLS to validator ${
-        validatorName || validatorAddress
-      }`,
-      "debug"
-    );
+    log.debug(`Building stake transaction for amount ${amount} HLS to validator ${validatorName || validatorAddress}`);
 
     const fixedBytes = "ahelios";
     const abiCoder = ethers.AbiCoder.defaultAbiCoder();
@@ -368,30 +514,32 @@ async function stake(wallet, amount, validatorAddress, validatorName) {
       chainId: CHAIN_ID,
       nonce: await getNextNonce(wallet.provider, wallet.address),
     };
-    addLog(`Debug: Stake transaction object: ${JSON.stringify(tx)}`, "debug");
+    log.debug(`Stake transaction object: ${JSON.stringify(tx)}`);
     const sentTx = await wallet.sendTransaction(tx);
-    addLog(`Stake transaction sent: ${getShortHash(sentTx.hash)}`, "success");
+    log.success(`Stake transaction sent: ${getShortHash(sentTx.hash)}`);
     const receipt = await sentTx.wait();
     if (receipt.status === 0) {
-      addLog(`Stake transaction reverted: ${JSON.stringify(receipt)}`, "error");
+      log.error(`Stake transaction reverted: ${JSON.stringify(receipt)}`);
       throw new Error("Transaction reverted");
     }
 
     try {
       const historyResult = await makeJsonRpcCall("eth_getAccountLastTransactionsInfo", [wallet.address]);
-      addLog(`Debug: Last transactions info: ${JSON.stringify(historyResult)}`, "debug");
+      log.debug(`Last transactions info: ${JSON.stringify(historyResult)}`);
     } catch (rpcError) {
-      addLog(`Failed to sync with portal via JSON-RPC: ${rpcError.message}`, "error");
+      log.error(`Failed to sync with portal via JSON-RPC: ${rpcError.message}`);
     }
 
-    addLog("Stake Transaction Confirmed And Synced With Portal", "success");
+    log.success("Stake Transaction Confirmed And Synced With Portal");
+    log.userInfo(`Transaction Link: ${chalk.blue(EXPLORER_TX_URL + receipt.hash)}`);
   } catch (error) {
-    addLog(`Stake operation failed: ${error.message}`, "error");
+    log.error(`Stake operation failed: ${error.message}`);
     if (error.reason) {
-      addLog(`Revert reason: ${error.reason}`, "error");
+      log.error(`Revert reason: ${error.reason}`);
     }
     if (error.receipt) {
-      addLog(`Transaction receipt: ${JSON.stringify(error.receipt)}`, "debug");
+      log.debug(`Transaction receipt: ${JSON.stringify(error.receipt)}`);
+      log.error(`Failed Tx Hash: ${error.receipt.hash}`);
     }
     throw error;
   }
@@ -399,13 +547,19 @@ async function stake(wallet, amount, validatorAddress, validatorName) {
 
 async function runDailyActivity() {
   if (privateKeys.length === 0) {
-    addLog("No valid private keys found. Please add them to INITIAL_PRIVATE_KEYS in index.js.", "error");
+    log.error("No valid private keys found. Please add them to PRIVATE_KEYS in your .env file.");
     return;
   }
-  addLog(
-    `Starting daily activity for all accounts. Auto Bridge: ${dailyActivityConfig.bridgeRepetitions}x, Auto Stake: ${dailyActivityConfig.stakeRepetitions}x`,
-    "info"
+  log.info(`Starting daily activity for all accounts`);
+  log.info(`Bridge: ${dailyActivityConfig.bridgeRepetitions}`);
+  log.info(`Stake Reps: ${dailyActivityConfig.stakeRepetitions}`);
+  log.info(
+    `Delay between transactions: ${dailyActivityConfig.minDelayBetweenTx / 1000}s - ${
+      dailyActivityConfig.maxDelayBetweenTx / 1000
+    }s`
   );
+  log.info(`Delay between accounts: ${dailyActivityConfig.delayBetweenAccounts / 1000}s`);
+
   activityRunning = true;
   isCycleRunning = true;
   shouldStop = false;
@@ -414,23 +568,22 @@ async function runDailyActivity() {
 
   try {
     for (let accountIndex = 0; accountIndex < privateKeys.length && !shouldStop; accountIndex++) {
-      addLog(`Starting processing for account ${accountIndex + 1}`, "info");
+      log.info(`Starting processing for account ${accountIndex + 1}`);
       selectedWalletIndex = accountIndex;
       let provider;
-      addLog(`Account ${accountIndex + 1}: Connecting without proxy`, "info");
       try {
         provider = await getProvider();
         await provider.getNetwork();
       } catch (error) {
-        addLog(`Failed to connect to provider for account ${accountIndex + 1}: ${error.message}`, "error");
+        log.error(`Failed to connect to provider for account ${accountIndex + 1}: ${error.message}`);
         continue;
       }
       const wallet = new ethers.Wallet(privateKeys[accountIndex], provider);
       if (!ethers.isAddress(wallet.address)) {
-        addLog(`Invalid wallet address for account ${accountIndex + 1}: ${wallet.address}`, "error");
+        log.error(`Invalid wallet address for account ${accountIndex + 1}: ${wallet.address}`);
         continue;
       }
-      addLog(`Processing account ${accountIndex + 1}: ${getShortAddress(wallet.address)}`, "wait");
+      log.loading(`Processing account ${accountIndex + 1}: ${getShortAddress(wallet.address)}`);
 
       const shuffledChains = [...availableChains].sort(() => Math.random() - 0.5);
 
@@ -454,63 +607,60 @@ async function runDailyActivity() {
             provider
           );
           const hlsBalance = await tokenContract.balanceOf(wallet.address);
-          addLog(
+          log.loading(
             `Account ${accountIndex + 1} - Bridge ${bridgeCount + 1}: HLS Balance: ${ethers.formatUnits(
               hlsBalance,
               18
-            )}`,
-            "wait"
+            )}`
           );
-          addLog(
-            `Account ${accountIndex + 1} - Bridge ${bridgeCount + 1}: Bridge ${amountHLS} HLS Helios ➯  ${destChainName}`,
-            "info"
+          log.info(
+            `Account ${accountIndex + 1} - Bridge ${bridgeCount + 1}: Bridge ${amountHLS} HLS Helios ➯ ${destChainName}`
           );
           let gasPrice = (await provider.getFeeData()).maxFeePerGas;
           if (!gasPrice) {
             gasPrice = ethers.parseUnits("1", "gwei");
-            addLog(`Using default gas price: 1 gwei`, "info");
+            log.info(`Using default gas price: 1 gwei`);
           }
           const gasLimit = BigInt(1500000);
           const gasCost = gasPrice * gasLimit;
           if (nativeBalance < gasCost) {
-            addLog(
+            log.error(
               `Account ${accountIndex + 1} - Bridge ${
                 bridgeCount + 1
-              }: Insufficient native balance (${ethers.formatEther(nativeBalance)} HLS)`,
-              "error"
+              }: Insufficient native balance (${ethers.formatEther(nativeBalance)} HLS)`
             );
             continue;
           }
           if (hlsBalance < amountWei) {
-            addLog(
+            log.error(
               `Account ${accountIndex + 1} - Bridge ${
                 bridgeCount + 1
-              }: Insufficient HLS balance (${ethers.formatUnits(hlsBalance, 18)} HLS)`,
-              "error"
+              }: Insufficient HLS balance (${ethers.formatUnits(hlsBalance, 18)} HLS)`
             );
             continue;
           }
 
           await bridge(wallet, amountHLS, wallet.address, destChainId);
         } catch (error) {
-          addLog(`Account ${accountIndex + 1} - Bridge ${bridgeCount + 1}: Failed: ${error.message}`, "error");
+          log.error(`Account ${accountIndex + 1} - Bridge ${bridgeCount + 1}: Failed: ${error.message}`);
         }
 
         if (bridgeCount < dailyActivityConfig.bridgeRepetitions - 1 && !shouldStop) {
-          const randomDelay = Math.floor(Math.random() * (60000 - 30000 + 1)) + 30000;
-          addLog(
-            `Account ${accountIndex + 1} - Waiting ${Math.floor(
-              randomDelay / 1000
-            )} seconds before next bridge...`,
-            "delay"
+          const randomDelay =
+            Math.floor(Math.random() * (dailyActivityConfig.maxDelayBetweenTx - dailyActivityConfig.minDelayBetweenTx + 1)) +
+            dailyActivityConfig.minDelayBetweenTx;
+          log.info(
+            `Account ${accountIndex + 1} - Waiting ${Math.floor(randomDelay / 1000)} seconds before next bridge...`
           );
           await sleep(randomDelay);
         }
       }
 
       if (!shouldStop) {
-        const stakeDelay = Math.floor(Math.random() * (15000 - 10000 + 1)) + 10000;
-        addLog(`Waiting ${stakeDelay / 1000} seconds before staking...`, "wait");
+        const stakeDelay =
+          Math.floor(Math.random() * (dailyActivityConfig.maxDelayBetweenTx - dailyActivityConfig.minDelayBetweenTx + 1)) +
+          dailyActivityConfig.minDelayBetweenTx;
+        log.loading(`Waiting ${stakeDelay / 1000} seconds before staking...`);
         await sleep(stakeDelay);
       }
 
@@ -527,38 +677,34 @@ async function runDailyActivity() {
           dailyActivityConfig.minHlsStake
         ).toFixed(4);
         try {
-          addLog(
-            `Account ${accountIndex + 1} - Stake ${stakeCount + 1}: Stake ${amountHLS} HLS to ${validator.name}`,
-            "info"
-          );
+          log.info(`Account ${accountIndex + 1} - Stake ${stakeCount + 1}: Stake ${amountHLS} HLS to ${validator.name}`);
           await stake(wallet, amountHLS, validator.address, validator.name);
         } catch (error) {
-          addLog(`Account ${accountIndex + 1} - Stake ${stakeCount + 1}: Failed: ${error.message}`, "error");
+          log.error(`Account ${accountIndex + 1} - Stake ${stakeCount + 1}: Failed: ${error.message}`);
         }
 
         if (stakeCount < dailyActivityConfig.stakeRepetitions - 1 && !shouldStop) {
-          const randomDelay = Math.floor(Math.random() * (60000 - 30000 + 1)) + 30000;
-          addLog(
-            `Account ${accountIndex + 1} - Waiting ${Math.floor(
-              randomDelay / 1000
-            )} seconds before next stake...`,
-            "delay"
+          const randomDelay =
+            Math.floor(Math.random() * (dailyActivityConfig.maxDelayBetweenTx - dailyActivityConfig.minDelayBetweenTx + 1)) +
+            dailyActivityConfig.minDelayBetweenTx;
+          log.info(
+            `Account ${accountIndex + 1} - Waiting ${Math.floor(randomDelay / 1000)} seconds before next stake...`
           );
           await sleep(randomDelay);
         }
       }
 
       if (accountIndex < privateKeys.length - 1 && !shouldStop) {
-        addLog(`Waiting 10 seconds before next account...`, "delay");
-        await sleep(10000);
+        log.info(`Waiting ${dailyActivityConfig.delayBetweenAccounts / 1000} seconds before next account...`);
+        await sleep(dailyActivityConfig.delayBetweenAccounts);
       }
     }
     if (!shouldStop && activeProcesses <= 0) {
-      addLog("All accounts processed. Waiting 24 hours for next cycle.", "success");
+      log.success("All accounts processed. Waiting 24 hours for next cycle.");
       dailyActivityInterval = setTimeout(runDailyActivity, 24 * 60 * 60 * 1000);
     }
   } catch (error) {
-    addLog(`Daily activity failed: ${error.message}`, "error");
+    log.error(`Daily activity failed: ${error.message}`);
   } finally {
     try {
       if (shouldStop) {
@@ -568,253 +714,77 @@ async function runDailyActivity() {
             if (dailyActivityInterval) {
               clearTimeout(dailyActivityInterval);
               dailyActivityInterval = null;
-              addLog("Cleared daily activity interval.", "info");
+              log.info("Cleared daily activity interval.");
             }
             activityRunning = false;
             isCycleRunning = false;
             shouldStop = false;
             hasLoggedSleepInterrupt = false;
             activeProcesses = 0;
-            addLog("Daily activity stopped successfully.", "success");
-            displayMainMenu();
+            log.success("Daily activity stopped successfully.");
+            console.log(chalk.bold.red("Script execution finished or stopped. Exiting..."));
+            rl.close();
+            process.exit(0);
           } else {
-            addLog(`Waiting for ${activeProcesses} process to complete...`, "info");
+            log.info(`Waiting for ${activeProcesses} process to complete...`);
           }
         }, 1000);
       } else {
         activityRunning = false;
         isCycleRunning = activeProcesses > 0 || dailyActivityInterval !== null;
-        displayMainMenu();
       }
       nonceTracker = {};
     } catch (finalError) {
-      addLog(`Error in runDailyActivity cleanup: ${finalError.message}`, "error");
+      log.error(`Error in runDailyActivity cleanup: ${finalError.message}`);
     }
   }
 }
 
-// --- Console UI Functions ---
-
-function displayHeader() {
-  console.clear();
-  console.log(chalk.bold.cyan("==================================="));
-  console.log(chalk.bold.cyan("        HELIOS TESTNET AUTO BOT    "));
-  console.log(chalk.bold.cyan("==================================="));
-  console.log("");
-}
-
-function displayStatus() {
-  const status = activityRunning
-    ? chalk.yellowBright("Running Daily Activity...")
-    : isCycleRunning && dailyActivityInterval !== null
-    ? chalk.yellowBright("Waiting for next daily cycle...")
-    : chalk.green("Idle");
-  console.log(`Status: ${status}`);
-  console.log(
-    `Total Accounts: ${privateKeys.length} | Auto Bridge: ${dailyActivityConfig.bridgeRepetitions}x | Auto Stake: ${dailyActivityConfig.stakeRepetitions}x`
-  );
-  console.log("");
-}
-
-async function displayWalletInfo() {
-  addLog("Fetching wallet information...", "info");
-  const tokenAbi = ["function balanceOf(address) view returns (uint256)"];
-  console.log(chalk.bold.blue("-------------------------------------------------"));
-  console.log(chalk.bold.blue("  Address                   HLS Balance"));
-  console.log(chalk.bold.blue("-------------------------------------------------"));
-  for (let i = 0; i < privateKeys.length; i++) {
-    try {
-      const provider = getProvider();
-      const wallet = new ethers.Wallet(privateKeys[i], provider);
-      const tokenContract = new ethers.Contract(TOKEN_ADDRESS, tokenAbi, provider);
-      const hlsBalance = await tokenContract.balanceOf(wallet.address);
-      const formattedHLS = Number(ethers.formatUnits(hlsBalance, 18)).toFixed(4);
-      console.log(
-        `${chalk.magentaBright(getShortAddress(wallet.address))}       ${chalk.cyanBright(formattedHLS)}`
-      );
-    } catch (error) {
-      console.log(`${chalk.redBright("N/A")}                       ${chalk.redBright("0.0000")} (Error: ${error.message})`);
-    }
-  }
-  console.log(chalk.bold.blue("-------------------------------------------------"));
-  console.log("");
-}
-
-function displayMainMenu() {
-  displayHeader();
-  displayStatus();
-  console.log(chalk.bold.yellow("--- Main Menu ---"));
-  console.log("1. Start Auto Daily Activity");
-  console.log("2. Set Manual Config");
-  console.log("3. Clear Console Output");
-  console.log("4. Refresh Wallet Info");
-  console.log("5. Exit");
-  console.log(chalk.bold.yellow("-----------------"));
-  promptMainAction();
-}
-
-function displayConfigMenu() {
-  displayHeader();
-  displayStatus();
-  console.log(chalk.bold.yellow("--- Manual Config Options ---"));
-  console.log("1. Set Bridge Repetitions (Current: " + dailyActivityConfig.bridgeRepetitions + ")");
-  console.log(
-    "2. Set HLS Range For Bridge (Current: " +
-      dailyActivityConfig.minHlsBridge +
-      " - " +
-      dailyActivityConfig.maxHlsBridge +
-      ")"
-  );
-  console.log("3. Set Stake Repetitions (Current: " + dailyActivityConfig.stakeRepetitions + ")");
-  console.log(
-    "4. Set HLS Range For Stake (Current: " +
-      dailyActivityConfig.minHlsStake +
-      " - " +
-      dailyActivityConfig.maxHlsStake +
-      ")"
-  );
-  console.log("5. Back to Main Menu");
-  console.log(chalk.bold.yellow("-----------------------------"));
-  promptConfigAction();
-}
-
-function promptMainAction() {
-  rl.question(chalk.green("Choose an option: "), async (answer) => {
-    switch (answer.trim()) {
-      case "1":
-        if (isCycleRunning) {
-          addLog("Cycle is still running. Stop the current cycle first.", "error");
-        } else {
-          runDailyActivity();
-        }
-        break;
-      case "2":
-        displayConfigMenu();
-        break;
-      case "3":
-        console.clear();
-        addLog("Console output cleared.", "success");
-        displayMainMenu();
-        break;
-      case "4":
-        await displayWalletInfo();
-        addLog("Wallet info refreshed.", "success");
-        displayMainMenu();
-        break;
-      case "5":
-        addLog("Exiting application", "info");
-        rl.close();
-        process.exit(0);
-      default:
-        addLog("Invalid option. Please try again.", "error");
-        displayMainMenu();
-        break;
-    }
-  });
-}
-
-function promptConfigAction() {
-  rl.question(chalk.green("Choose an option for config: "), async (answer) => {
-    switch (answer.trim()) {
-      case "1":
-        rl.question(
-          chalk.cyan("Enter new Bridge Repetitions (current: " + dailyActivityConfig.bridgeRepetitions + "): "),
-          (value) => {
-            const numValue = parseInt(value.trim());
-            if (isNaN(numValue) || numValue <= 0) {
-              addLog("Invalid input. Please enter a positive number.", "error");
-            } else {
-              dailyActivityConfig.bridgeRepetitions = numValue;
-              addLog(`Bridge Repetitions set to ${dailyActivityConfig.bridgeRepetitions}`, "success");
-            }
-            displayConfigMenu();
-          }
-        );
-        break;
-      case "2":
-        rl.question(
-          chalk.cyan(
-            "Enter Min HLS for Bridge (current: " + dailyActivityConfig.minHlsBridge + "): "
-          ),
-          (minValue) => {
-            rl.question(
-              chalk.cyan(
-                "Enter Max HLS for Bridge (current: " + dailyActivityConfig.maxHlsBridge + "): "
-              ),
-              (maxValue) => {
-                const min = parseFloat(minValue.trim());
-                const max = parseFloat(maxValue.trim());
-                if (isNaN(min) || isNaN(max) || min <= 0 || max <= 0 || min > max) {
-                  addLog("Invalid HLS range. Please enter positive numbers, and min <= max.", "error");
-                } else {
-                  dailyActivityConfig.minHlsBridge = min;
-                  dailyActivityConfig.maxHlsBridge = max;
-                  addLog(`HLS Range for Bridge set to ${min} - ${max}`, "success");
-                }
-                displayConfigMenu();
-              }
-            );
-          }
-        );
-        break;
-      case "3":
-        rl.question(
-          chalk.cyan("Enter new Stake Repetitions (current: " + dailyActivityConfig.stakeRepetitions + "): "),
-          (value) => {
-            const numValue = parseInt(value.trim());
-            if (isNaN(numValue) || numValue <= 0) {
-              addLog("Invalid input. Please enter a positive number.", "error");
-            } else {
-              dailyActivityConfig.stakeRepetitions = numValue;
-              addLog(`Stake Repetitions set to ${dailyActivityConfig.stakeRepetitions}`, "success");
-            }
-            displayConfigMenu();
-          }
-        );
-        break;
-      case "4":
-        rl.question(
-          chalk.cyan(
-            "Enter Min HLS for Stake (current: " + dailyActivityConfig.minHlsStake + "): "
-          ),
-          (minValue) => {
-            rl.question(
-              chalk.cyan(
-                "Enter Max HLS for Stake (current: " + dailyActivityConfig.maxHlsStake + "): "
-              ),
-              (maxValue) => {
-                const min = parseFloat(minValue.trim());
-                const max = parseFloat(maxValue.trim());
-                if (isNaN(min) || isNaN(max) || min <= 0 || max <= 0 || min > max) {
-                  addLog("Invalid HLS range. Please enter positive numbers, and min <= max.", "error");
-                } else {
-                  dailyActivityConfig.minHlsStake = min;
-                  dailyActivityConfig.maxHlsStake = max;
-                  addLog(`HLS Range for Stake set to ${min} - ${max}`, "success");
-                }
-                displayConfigMenu();
-              }
-            );
-          }
-        );
-        break;
-      case "5":
-        displayMainMenu();
-        break;
-      default:
-        addLog("Invalid option. Please try again.", "error");
-        displayConfigMenu();
-        break;
-    }
-  });
-}
+// --- Initialization ---
 
 async function initialize() {
-  console.clear();
-  displayHeader();
-  loadPrivateKeys(); // Load keys directly from the script
-  await displayWalletInfo(); // Display wallet info on startup
-  displayMainMenu(); // Show the main menu
+  displayHeader(); // Display header early
+
+  let passwordCorrect = false;
+  while (!passwordCorrect) {
+    const enteredPassword = (await askQuestion("Masukkan password untuk menjalankan bot: ", true)) // 'true' for hidden input
+                               .replace(/[^a-zA-Z0-9]/g, '') // Only allow alphanumeric characters
+                               .trim(); // Ensure no leading/trailing spaces
+
+    if (enteredPassword === SCRIPT_PASSWORD) {
+      log.success("Password benar! Memulai bot...");
+      passwordCorrect = true;
+    } else {
+      log.error("Password salah. Silakan coba lagi.");
+    }
+  }
+
+  loadPrivateKeys();
+  await displayWalletInfo();
+
+  await promptForConfig();
+
+  log.info("Starting auto daily activity...");
+  runDailyActivity();
 }
 
 initialize();
+
+process.on("SIGINT", () => {
+  log.warn("\nCtrl+C detected! Attempting to stop activity gracefully...");
+  shouldStop = true;
+  if (dailyActivityInterval) {
+    clearTimeout(dailyActivityInterval);
+    dailyActivityInterval = null;
+    log.info("Daily activity interval cleared.");
+  }
+  setTimeout(() => {
+    if (activeProcesses <= 0) {
+      log.error("No active processes. Exiting now.");
+      rl.close();
+      process.exit(0);
+    } else {
+      log.warn(`Waiting for ${activeProcesses} remaining process(es) to finish...`);
+    }
+  }, 1000);
+});
