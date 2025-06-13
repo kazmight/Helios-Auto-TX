@@ -3,7 +3,7 @@
 This Node.js bot automates bridging and staking activities on the Helios Testnet using multiple private keys. It's designed to help interact with the network by performing repetitive tasks with configurable delays.
 
 ## Don't forget join telegram channel Dasar Pemulung for Password.
-Links telegram: https://t.me/dasarpemulung
+## Links telegram: https://t.me/dasarpemulung
 
 ## Features
 
