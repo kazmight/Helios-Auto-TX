@@ -1,9 +1,9 @@
-import chalk from "chalk";
-import { ethers } from "ethers";
-import dotenv from "dotenv";
-import axios from "axios";
-import { v4 as uuidv4 } from "uuid";
-import readline from "readline";
+const chalk = require("chalk");
+const { ethers } = require("ethers");
+const dotenv = require("dotenv");
+const axios = require("axios");
+const { v4: uuidv4 } = require("uuid"); // Note: v4 as uuidv4 for named export
+const readline = require("readline");
 
 // Load environment variables from .env file
 dotenv.config();
