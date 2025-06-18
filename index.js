@@ -45,6 +45,9 @@ const chainNames = {
 const availableValidators = [
   { name: "helios-hedge", address: "0x007a1123a54cdd9ba35ad2012db086b9d8350a5f" },
   { name: "helios-supra", address: "0x882f8a95409c127f0de7ba83b4dfa0096c3d8d79" },
+  { name: "helios-peer", address: "0x72a9B3509B19D9Dbc2E0Df71c4A6451e8a3DD705" },
+  { name: "helios-unity", address: "0x7e62c5e7Eba41fC8c25e605749C476C0236e0604" },
+  { name: "helios-inter", address: "0xa75a393FF3D17eA7D9c9105d5459769EA3EAEf8D" },
 ];
 
 const isDebug = false; // Set to true for detailed debug logs
